@@ -23,7 +23,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/time.h>
+#include <sys\time.h>
 
 /* 8 gb */
 static const int64_t kBytes = 8LL << 30;
