@@ -20,35 +20,35 @@
 #include <list>
 #include <string>
 #include <atltrace.h>
-#include "http_parser.h"
 #include <unordered_map>
+#include "http_parser.h"
 
 #pragma comment(lib,"ws2_32.lib")
-
-//listen port
-#define PORT 10240
-//wsabuf.buf size
-#define BUFSIZE (1024*4)
-//IoContext's guid
-int IoContextId = 0;
 
 class HttpContext;
 class IoContext;
 class SocketContext;
 class SocketHttpContext;
 class Http;
-class Iocp;
+class Tcp;
 
 typedef int(*http_data_cb) (http_parser*, const char *at, size_t length);
 typedef int(*http_cb) (http_parser*);
-typedef void(*void_function_http) (Http *);
+typedef void(*void_function);
 
 using namespace std;
+
+//-------------------Contexts-----------------------
 
 class HttpContext {
 public:
 	OVERLAPPED overLapped;
 	HANDLE fileHandle;
+	enum ioType {
+		processing,
+		done,
+	};
+	ioType type;
 };
 
 class IoContext {
@@ -89,15 +89,23 @@ public:
 	ioType type = ioType::idle;
 };
 
-class ThreadForIocp {
+class SocketHttpContext {
+public:
+	SocketContext * socketContext;
+	HttpContext * httpContext;
+};
+
+//-------------------------Threads-----------------------
+
+class ThreadForTcp {
 public:
 	static int threadNum;
 	int currentNum;
 	static CRITICAL_SECTION lock;
 
-	ThreadForIocp();
-	ThreadForIocp(LPVOID lpParam);
-	~ThreadForIocp();
+	ThreadForTcp();
+	ThreadForTcp(LPVOID lpParam);
+	~ThreadForTcp();
 
 	static DWORD WINAPI run(LPVOID lpParam);
 };
@@ -115,16 +123,12 @@ public:
 	static DWORD WINAPI run(LPVOID lpParam);
 };
 
-class SocketHttpContext {
-public:
-	SocketContext * socketContext;
-	HttpContext * httpContext;
-};
+//-------------------------------Http-----------------------
 
 class Http {
 public:
-	unordered_map<long, void_function_http>http_data_cbs;
-	unordered_map<long, void_function_http> http_cbs;
+	unordered_map<long, void_function>http_data_cbs;
+	unordered_map<long, void_function> http_cbs;
 
 	http_data_cb custom_url_cb;
 	http_data_cb custom_header_field_cb;
@@ -142,8 +146,12 @@ public:
 	void start();
 
 	long calculateCallback(char name[], int len);
-	void insertCallback(char name[], int len, void_function_http);
-	void insertDataCallback(char name[], int len, void_function_http);
+	void insertCallback(char name[], int len, void_function);
+	void insertDataCallback(char name[], int len, void_function);
+
+	//------Hello world-----
+	void dealRecvHelloWorld(SocketHttpContext * shc);
+	void dealSendHelloWorld(SocketHttpContext * shc);
 
 	//------DEAL--------
 	void dealRecv(SocketHttpContext * shc);
@@ -153,9 +161,11 @@ public:
 	void postSend(SocketHttpContext * shc, HttpContext * hc);
 };
 
-class Iocp {
+//---------------------------Tcp----------------------------
+
+class Tcp {
 public:
-	friend class ThreadForIocp;
+	friend class ThreadForTcp;
 	friend class ThreadForHttp;
 
 	SocketContext * listenSocketContext;
@@ -167,8 +177,8 @@ public:
 	Http * http;
 
 public:
-	Iocp();
-	~Iocp();
+	Tcp();
+	~Tcp();
 	//0.post accept
 	//1.run thread
 	void start(int i = 10);
