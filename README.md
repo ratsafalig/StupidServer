@@ -12,7 +12,6 @@ int main(){
 	Tcp * tcp = new Tcp();
 	Http * http = new Http();
 
-	//binding http service to iocp
 	tcp->http = http;
 
 	tcp->init();
