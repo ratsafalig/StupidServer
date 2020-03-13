@@ -1,4 +1,5 @@
 ﻿  http.cpp
-  server.cpp
+c:\users\ratsafalig\desktop\stupidserver\consoleapplication1\http.cpp(18): warning C4267: “=”: 从“size_t”转换到“char”，可能丢失数据
+  tcp.cpp
   正在生成代码...
   ConsoleApplication1.vcxproj -> C:\Users\ratsafalig\Desktop\StupidServer\Debug\ConsoleApplication1.exe

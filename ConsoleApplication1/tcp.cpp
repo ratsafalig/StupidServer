@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include "server.h"
 
 //listen port
@@ -7,8 +8,6 @@
 #define BUFSIZE (1024*4)
 //IoContext's guid
 int IoContextId = 0;
-
-//-----------------------------------TCP------------------------------------------
 
 IoContext::IoContext() : mark(IoContextId++){
 	//alloc buffer
@@ -57,7 +56,7 @@ SocketContext::SocketContext(){
 
 SocketContext::~SocketContext() {
 	EnterCriticalSection(&ThreadForTcp::lock);
-	std::cout << "deleting a io socket context" << std::endl;
+	std::cout << "~SocketContext()" << std::endl;
 	LeaveCriticalSection(&ThreadForTcp::lock);
 	//release heap space
 	delete ioContext;
@@ -95,7 +94,7 @@ bool Tcp::init() {
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 
 	//create iocp
-	completionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, NULL, 0);
+	tcpCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, NULL, 0);
 
 	listenSocketContext = new SocketContext();
 	listenSocketContext->type = SocketContext::ioType::accept;
@@ -110,7 +109,7 @@ bool Tcp::init() {
 	if (INVALID_SOCKET == listenSocketContext->ioContext->s)
 		return false;
 	//associate listen socket with iocp
-	if (NULL == CreateIoCompletionPort((HANDLE)listenSocketContext->ioContext->s, completionPort, (ULONG_PTR)listenSocketContext, NULL))
+	if (NULL == CreateIoCompletionPort((HANDLE)listenSocketContext->ioContext->s, tcpCompletionPort, (ULONG_PTR)listenSocketContext, NULL))
 		return false;
 	//bind and listen
 	sockaddr_in si;
@@ -172,7 +171,7 @@ bool Tcp::postRecv(SocketContext * sc, IoContext * ic) {
 	error = WSAIoctl(ic->s, SIO_KEEPALIVE_VALS, &aliveIn, sizeof(aliveIn), &aliveOut, sizeof(aliveOut), &ul, NULL, NULL);
 	if (SOCKET_ERROR == error)
 		return false;
-	CreateIoCompletionPort((HANDLE)ic->s, completionPort, (ULONG_PTR)sc, NULL);
+	CreateIoCompletionPort((HANDLE)ic->s, tcpCompletionPort, (ULONG_PTR)sc, NULL);
 	//call WSARecv
 	error = WSARecv(ic->s, &ic->wsaBuf, 1, &ic->numberOfBytes, &ic->flags, &ic->overLapped, NULL);
 	error = GetLastError();
@@ -186,10 +185,11 @@ bool Tcp::dealRecv(SocketContext * sc, IoContext * ic) {
 	sc->type = SocketContext::ioType::send;
 	socketHttpContext->socketContext = sc;
 	socketHttpContext->socketContext->ioContext->resetOverLapped();
-	//upper call HELLO WORLD
-	http->dealRecvHelloWorld(socketHttpContext);
+	//upper call hello world
+	//http->dealRecvHelloWorld(socketHttpContext);
+	http->dealRecv(socketHttpContext);
 	//-------------------------------
-	GetQueuedCompletionStatus(http->completionPort, &dw, (PULONG_PTR)&socketHttpContext, &ol, INFINITE);
+	GetQueuedCompletionStatus(http->exchangeCompletionPort, &dw, (PULONG_PTR)&socketHttpContext, &ol, INFINITE);
 	socketHttpContext->socketContext->type = SocketContext::ioType::send;
 	postSend(socketHttpContext->socketContext, ic);
 	//postRecv(socketHttpContext->socketContext, ic);
@@ -226,7 +226,8 @@ DWORD WINAPI ThreadForTcp::run(LPVOID lpParam) {
 	IoContext * ioContext = NULL;
 
 	while (true) {
-		BOOL r = GetQueuedCompletionStatus(tcp->completionPort, &numberOfBytesTransferred, (PULONG_PTR)&socketContext, (LPOVERLAPPED *)&ol, INFINITE);
+		BOOL r = GetQueuedCompletionStatus(tcp->tcpCompletionPort, &numberOfBytesTransferred, (PULONG_PTR)&socketContext, (LPOVERLAPPED *)&ol, INFINITE);
+		socketContext->ioContext->numberOfBytes = numberOfBytesTransferred;
 		ioContext = CONTAINING_RECORD(ol, IoContext, overLapped);
 		int error = GetLastError();
 		switch (socketContext->type) {
@@ -252,9 +253,7 @@ DWORD WINAPI ThreadForTcp::run(LPVOID lpParam) {
 int ThreadForTcp::threadNum = 0;
 CRITICAL_SECTION ThreadForTcp::lock;
 
-
-int main(){
-
+void normalStart() {
 	Tcp * tcp = new Tcp();
 	Http * http = new Http();
 
@@ -268,9 +267,61 @@ int main(){
 	http->start();
 
 	system("pause");
+}
 
+void testStart() {
+	char buffer[] = "\
+GET / HTTP/1.1\r\n\
+Host : 127.0.0.1:9999\r\n\
+Connection : keep-alive\r\n\
+Cache-Control : max-age=0\r\n\
+Upgrade-Insecure-Requests : 1\r\n\
+User-Agent : Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.43 Safari/537.36 Edg/81.0.416.28\r\n\
+Accept : text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9\r\n\
+Accept-Encoding : gzip, deflate, br\r\n\
+Accept-Language : zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6\r\n\r\n";
+
+	int length = sizeof(buffer);
+	WSADATA data;
+	BOOL r = 0;
+	WSAStartup(MAKEWORD(2, 2), &data);
+	SOCKET client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (client == INVALID_SOCKET)
+		cout << "INVALID_SOCKET" << endl;
+	r = GetLastError();
+	struct sockaddr_in remote;
+	remote.sin_family = AF_INET;
+	remote.sin_port = htons(9999);
+	remote.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+	r = connect(client, (struct sockaddr *)&remote, sizeof(remote));
+	r = GetLastError();
+	r = send(client, buffer, length, 0);
+	r = GetLastError();
+	char recvBuffer[10000];
+	ZeroMemory(recvBuffer, 10000);
+	r = recv(client, recvBuffer, 10000, 0);
+	r = GetLastError();
+	cout << recvBuffer;
+	WSACleanup();
+}
+
+int main(){
+
+	Tcp * tcp = new Tcp();
+	Http * http = new Http();
+
+	//binding http service to iocp
+	tcp->http = http;
+
+	tcp->init();
+	http->init();
+
+	http->map((char *)"/a", 2, (char*)"hello_world.html", 17);
+
+	tcp->start();
+	http->start();
+
+	system("pause");
 	return 0;
 };
 
-
- 

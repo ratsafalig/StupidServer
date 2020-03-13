@@ -1,5 +1,3 @@
-#pragma once
-
 #include "stdafx.h"
 #include "stdio.h"
 #include "iostream"
@@ -25,6 +23,26 @@
 
 #pragma comment(lib,"ws2_32.lib")
 
+#define HTTP_RESPONSE_HEAD \
+"HTTP/1.1 200 OK\r\n\
+Content-Type: text/html\r\n\
+Date: Thu, 12 Mar 2020 12:55:10 GMT\r\n\
+Connection: keep - alive\r\n\
+Transfer-Encoding: chunked\r\n\
+\r\n"
+#define HTTP_RESPONSE_TAIL \
+"\r\n\
+0\r\n\
+\r\n"
+#define HTTP_MAX_RESPONSE_SIZE 10000
+//--------------------
+#define FILE_MAX_BUFFER_SIZE 10000
+#define FILE_MAX_NAME_SIZE 100
+//--------------------
+#define URL_TYPE_MAP_ONLY 0
+#define URL_TYPE_CB_ONLY 1
+//--------------------
+
 class HttpContext;
 class IoContext;
 class SocketContext;
@@ -34,21 +52,27 @@ class Tcp;
 
 typedef int(*http_data_cb) (http_parser*, const char *at, size_t length);
 typedef int(*http_cb) (http_parser*);
-typedef void(*void_function);
 
 using namespace std;
 
-//-------------------Contexts-----------------------
+//----------Utility----------
+
+//----------Contexts----------
 
 class HttpContext {
 public:
 	OVERLAPPED overLapped;
 	HANDLE fileHandle;
+	DWORD numberOfBytes;
 	enum ioType {
 		processing,
 		done,
 	};
 	ioType type;
+
+	HttpContext();
+	~HttpContext();
+	void resetOverLapped();
 };
 
 class IoContext {
@@ -91,11 +115,13 @@ public:
 
 class SocketHttpContext {
 public:
+	SocketHttpContext();
+	~SocketHttpContext();
 	SocketContext * socketContext;
 	HttpContext * httpContext;
 };
 
-//-------------------------Threads-----------------------
+//----------Threads----------
 
 class ThreadForTcp {
 public:
@@ -123,21 +149,29 @@ public:
 	static DWORD WINAPI run(LPVOID lpParam);
 };
 
-//-------------------------------Http-----------------------
+//----------Http----------
 
 class Http {
 public:
-	unordered_map<long, void_function>http_data_cbs;
-	unordered_map<long, void_function> http_cbs;
+	CRITICAL_SECTION lock;
 
-	http_data_cb custom_url_cb;
-	http_data_cb custom_header_field_cb;
-	http_data_cb custom_header_value_cb;
+	unordered_map<size_t, pair<char*, size_t>> mappings;
 
 	http_parser * parser;
 	http_parser_settings settings;
 
-	HANDLE completionPort;
+	//completion for exchange completion between Http and Tcp class
+	HANDLE exchangeCompletionPort;
+	HANDLE httpCompletionPort;
+
+	struct custom_data {
+		int type = 0;
+		Http * http = NULL;
+		SocketHttpContext * shc = NULL;
+		void * cb;
+		void * param;
+	};
+
 
 	Http();
 	~Http();
@@ -145,23 +179,18 @@ public:
 	void init();
 	void start();
 
-	long calculateCallback(char name[], int len);
-	void insertCallback(char name[], int len, void_function);
-	void insertDataCallback(char name[], int len, void_function);
-
-	//------Hello world-----
+	//----------Hello world----------
 	void dealRecvHelloWorld(SocketHttpContext * shc);
-	void dealSendHelloWorld(SocketHttpContext * shc);
 
-	//------DEAL--------
+	//----------Deal----------
 	void dealRecv(SocketHttpContext * shc);
 	void dealSend(SocketHttpContext * shc);
-	//------POST--------
-	void postRecv(SocketHttpContext * shc, HttpContext * hc);
-	void postSend(SocketHttpContext * shc, HttpContext * hc);
+
+	void map(char * url, size_t url_len, char * file, size_t file_len);
+
 };
 
-//---------------------------Tcp----------------------------
+//----------Tcp----------
 
 class Tcp {
 public:
@@ -169,7 +198,7 @@ public:
 	friend class ThreadForHttp;
 
 	SocketContext * listenSocketContext;
-	HANDLE completionPort;
+	HANDLE tcpCompletionPort;
 
 	LPFN_ACCEPTEX fnAcceptEx;
 	LPFN_GETACCEPTEXSOCKADDRS fnGetAcceptExSockAddrs;
@@ -189,17 +218,15 @@ public:
 	//3.bind and listen
 	bool init();
 
-	bool postAccept(SocketContext * sc, IoContext * ic);
-
 	bool dealAccept(SocketContext * sc, IoContext * ic);
-
-	bool postRecv(SocketContext * sc, IoContext * ic);
 
 	bool dealRecv(SocketContext * sc, IoContext * ic);
 
-	bool postSend(SocketContext * sc, IoContext * ic);
-
 	bool dealSend(SocketContext * sc, IoContext * ic);
+
+	bool postSend(SocketContext * sc, IoContext * ic);
+	bool postRecv(SocketContext * sc, IoContext * ic);
+	bool postAccept(SocketContext * sc, IoContext * ic);
 
 	//check if the connection is alive
 	bool isAlive(SocketContext * sc, IoContext * ic);
